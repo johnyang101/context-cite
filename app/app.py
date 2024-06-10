@@ -3,28 +3,26 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import streamlit as st
-from context_cite.cc_groq import GroqContextCiter
 from pinecone import Pinecone
 from openai import OpenAI
-from groq import Groq
-import cohere
 import torch as ch
 from typing import List
 from difflib import get_close_matches
 from nltk.tokenize import sent_tokenize
+from context_cite.context_citer import ContextCiter
 
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
+# GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+# COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
 
 openai_client =  OpenAI(
     api_key=OPENAI_API_KEY,
 )
 
-groq_client = Groq(api_key=GROQ_API_KEY)
+# groq_client = Groq(api_key=GROQ_API_KEY)
 
-cohere_client = cohere.Client(api_key=COHERE_API_KEY)
+# cohere_client = cohere.Client(api_key=COHERE_API_KEY)
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -74,6 +72,15 @@ def perform_rag(query):
     combined_context += "Hypophosphatasia is a rare, inherited metabolic disorder that affects the development of bones and teeth. It is caused by mutations in the ALPL gene, which encodes an enzyme called alkaline phosphatase. People with hypophosphatasia have low levels of alkaline phosphatase, which leads to abnormal mineralization of bones and teeth. The severity of the condition can vary widely, from mild forms that only affect the teeth to severe forms that can be life-threatening. Treatment for hypophosphatasia is focused on managing symptoms and preventing complications. This may include medications to increase alkaline phosphatase levels, physical therapy, and surgery to correct bone deformities."
     return combined_context
 
+def _create_chat_context(messages, retrieved_context):
+    chat_context = "You are a helpful assistant.\n"
+    for message in messages:
+        chat_context += f"{message['role']}: {message['content']}\n"
+    chat_context += f"Retrieved Context:\n{retrieved_context}"
+    return chat_context
+
+PROMPT_TEMPLATE = "Chat: {context}\n\nQuery: {query}"
+
 # Accept user input
 if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
     # Add user message to chat history
@@ -98,34 +105,34 @@ if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
 
         st.write(f"Closest sentence: {closest_sentence}")
         # attr_df = cc.get_attributions(closest_sentence, as_dataframe=True, top_k=5).data
-        attr_df = cc.get_rerank_df(closest_sentence, top_k=5)
+        attr_df = cc.get_attributions(top_k=5, as_dataframe=True).data
         attr_df = attr_df[attr_df['Score'] != 0]
         with st.chat_message("assistant"):
             st.write(attr_df)
     else:
         # Define the context
-        context = perform_rag(prompt)
+        retrieved_context = perform_rag(prompt)
+        chat_context = _create_chat_context(st.session_state.messages, retrieved_context)
 
         # Initialize the GroqContextCiter
-        cc = GroqContextCiter(
-            groq_model='llama3-70b-8192',
-            context=context,
+        cc = ContextCiter.from_pretrained( 
+            pretrained_model_name_or_path='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+            context=chat_context,
             query=prompt,
-            groq_client=groq_client,
-            openai_client=openai_client,
-            cohere_client=cohere_client,
-            num_ablations=8
+            num_ablations=32,
+            device='cpu'
         )
+
         st.session_state.cc = cc
         response = cc.response
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
             st.markdown(response)
-        cc.messages.append(user_query_message)
+        # cc.messages.append(user_query_message)
         # Add assistant response to chat history
         assistant_message = {"role": "assistant", "content": response}
         st.session_state.messages.append(assistant_message)
-        cc.messages.append(assistant_message)
+        # cc.messages.append(assistant_message)
 
 # Add this at the end of your file
 st.markdown("""

@@ -12,6 +12,7 @@ import torch as ch
 from typing import List
 from difflib import get_close_matches
 from nltk.tokenize import sent_tokenize
+from st_click_detector import click_detector
 
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
@@ -74,6 +75,9 @@ def perform_rag(query):
     combined_context += "Hypophosphatasia is a rare, inherited metabolic disorder that affects the development of bones and teeth. It is caused by mutations in the ALPL gene, which encodes an enzyme called alkaline phosphatase. People with hypophosphatasia have low levels of alkaline phosphatase, which leads to abnormal mineralization of bones and teeth. The severity of the condition can vary widely, from mild forms that only affect the teeth to severe forms that can be life-threatening. Treatment for hypophosphatasia is focused on managing symptoms and preventing complications. This may include medications to increase alkaline phosphatase levels, physical therapy, and surgery to correct bone deformities."
     return combined_context
 
+if "response_links" not in st.session_state:
+    st.session_state.response_links = False
+
 # Accept user input
 if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
     # Add user message to chat history
@@ -118,14 +122,39 @@ if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
         )
         st.session_state.cc = cc
         response = cc.response
-        # Display assistant response in chat message container
-        with st.chat_message("assistant"):
-            st.markdown(response)
+        
+        def _html(response):
+            sentences = sent_tokenize(response)
+            content = ""
+            for i, sentence in enumerate(sentences):
+                content += f"<a href='#' id='Sentence {i+1}' style='color: black; text-decoration: none;' onmouseover='this.style.textDecoration=\"underline\"' onmouseout='this.style.textDecoration=\"none\"'>{sentence} </a>" #NOTE: the space at the end is intentional 
+            return content
+
+        response_links = _html(response)
+
+        st.session_state.response_links = response_links
+        #TODO: Need good state variable tracking whether it's assistant or not
+
         cc.messages.append(user_query_message)
         # Add assistant response to chat history
         assistant_message = {"role": "assistant", "content": response}
-        st.session_state.messages.append(assistant_message)
+        # st.session_state.messages.append(assistant_message)
         cc.messages.append(assistant_message)
+
+if st.session_state.response_links:
+    with st.chat_message("assistant"):
+        clicked = click_detector(st.session_state.response_links, key=st.session_state.messages[-1]["content"])
+
+    if clicked != "":
+        if "last_clicked" not in st.session_state:
+            st.session_state["last_clicked"] = clicked
+        else:
+            if clicked != st.session_state["last_clicked"]:
+                st.session_state["last_clicked"] = clicked
+
+        st.session_state.messages[-1]["content"] += f"\n\nCiting {clicked}"
+    with st.chat_message("assistant"):
+        st.write(f"**{clicked} clicked**" if clicked != "" else "**No click**")
 
 # Add this at the end of your file
 st.markdown("""

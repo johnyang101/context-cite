@@ -1,6 +1,6 @@
 # Fast Causal Attributions for Rare Disease Q&A Using Groq
 
-[Hypophosphatasia Cited Q&A App](https://context-cite-2wukcnr4uvvmpcycghrhws.streamlit.app/)
+[Hypophosphatasia Q&A App With Citations](https://context-cite-2wukcnr4uvvmpcycghrhws.streamlit.app/)
 
 ## Project Goal
 

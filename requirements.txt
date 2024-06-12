@@ -1,12 +1,3 @@
-numpy
-torch
-transformers
-datasets
-pandas
-nltk
-spacy
-scikit-learn
-tqdm
 groq
 openai
 cohere
@@ -14,3 +5,4 @@ cohere
 context-cite
 pinecone
 # streamlit
+st_click_detector

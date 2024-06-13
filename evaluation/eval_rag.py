@@ -1,15 +1,7 @@
 import pandas as pd
 from app import openai_client, run_rag
 import re
-
-
-def verify_response(row):
-    instruction = row.question
-    reference_answer = row.answer
-    print("q: ", row.question)
-    response = run_rag(row.question).response
-
-    EVALUATION_PROMPT = f"""###Task Description:
+EVALUATION_PROMPT_TEMPLATE = """###Task Description:
     An instruction (might include an Input inside it), a response to evaluate, a reference answer that gets a score of 5, and a score rubric representing a evaluation criteria are given.
     1. Write a detailed feedback that assess the quality of the response strictly based on the given score rubric, not evaluating in general.
     2. After writing a feedback, write a score that is an integer between 1 and 5. You should refer to the score rubric.
@@ -35,27 +27,54 @@ def verify_response(row):
 
     ###Feedback:"""
 
-    verification = openai_client.chat.completions.create(
-        model='gpt-4o',
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": EVALUATION_PROMPT}
-        ],
-        max_tokens=150,
-        n=1,
-        stop=None,
-        temperature=0.7
+
+def get_score_from_evaluation(eval_text: str) -> str:
+    """
+    Extracts the score from the evaluation result.
+    """
+    # Define the regular expression pattern
+    pattern = r'\[RESULT\] (\d)'
+    # Find all matches in the text
+    matches = re.findall(pattern, eval_text)
+    if matches:
+        return matches[-1]
+    return "N/A"
+
+
+def verify_response(row):
+    print("q: ", row.question)
+    instruction = row.question
+    reference_answer = row.answer
+    # Generate response using the RAG model
+    response = run_rag(row.question).response
+
+    evaluation_prompt = EVALUATION_PROMPT_TEMPLATE.format(
+        instruction=instruction,
+        response=response,
+        reference_answer=reference_answer
     )
-    eval_result = verification.choices[0].message.content
-    return eval_result
+    try:
+        verification = openai_client.chat.completions.create(
+            model='gpt-4o',
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": evaluation_prompt}
+            ],
+            max_tokens=150,
+            n=1,
+            stop=None,
+            temperature=0.7
+        )
+        eval_result = verification.choices[0].message.content
+    except Exception as e:
+        raise RuntimeError("OpenAI API call failed") from e
+
+    # Get score from the evaluation
+    score = get_score_from_evaluation(eval_result)
+    return response, eval_result, score
 
 
 if __name__ == "__main__":
     df = pd.read_json("hpp_qa.json")
-    verifications = df.apply(verify_response, axis=1)
-    df["Evaluation"] = verifications
-    # Define the regular expression pattern
-    pattern = r'\[RESULT\] (\d)'
-    # Find all matches in the text
-    df["Score"] = df["Evaluation"].map(lambda x: re.findall(pattern, x)[0])
+    df[["chat_response", "evaluation", "score"]] = df.apply(verify_response, axis=1, result_type='expand')
     df.to_json("hpp_qa_evaluated.json", indent=4, orient="records")

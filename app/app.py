@@ -43,7 +43,7 @@ for message in st.session_state.messages:
 def _get_embedding(text) -> List[float]:
     if isinstance(text, str):
         text = [text]
-    embedding_response = openai_client.embeddings.create(input=text, 
+    embedding_response = openai_client.embeddings.create(input=text,
                                                          model="text-embedding-3-small",
                                                          dimensions=256) #hardcoded for our index
     embeddings = ch.stack([ch.tensor(item.embedding) for item in embedding_response.data])
@@ -56,7 +56,8 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 # Connect to the Pinecone index
 index = pc.Index("stanfordrdhack") #index generated from other hackathon project for simplicity
 
-def perform_rag(query):
+
+def get_context(query) -> str:
     query_embedding = _get_embedding(query)
     # Perform a similarity search in the Pinecone index
     search_results = index.query(
@@ -74,6 +75,22 @@ def perform_rag(query):
     combined_context = " ".join(relevant_contexts)
     combined_context += "Hypophosphatasia is a rare, inherited metabolic disorder that affects the development of bones and teeth. It is caused by mutations in the ALPL gene, which encodes an enzyme called alkaline phosphatase. People with hypophosphatasia have low levels of alkaline phosphatase, which leads to abnormal mineralization of bones and teeth. The severity of the condition can vary widely, from mild forms that only affect the teeth to severe forms that can be life-threatening. Treatment for hypophosphatasia is focused on managing symptoms and preventing complications. This may include medications to increase alkaline phosphatase levels, physical therapy, and surgery to correct bone deformities."
     return combined_context
+
+def run_rag(query: str) -> GroqContextCiter:
+    # Define the context
+    context = get_context(query)
+
+    # Initialize the GroqContextCiter
+    return GroqContextCiter(
+        groq_model='llama3-70b-8192',
+        context=context,
+        query=query,
+        groq_client=groq_client,
+        openai_client=openai_client,
+        cohere_client=cohere_client,
+        num_ablations=8
+    )
+
 
 if "response_links" not in st.session_state:
     st.session_state.response_links = False
@@ -96,18 +113,7 @@ if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    context = perform_rag(prompt)
-
-    # Initialize the GroqContextCiter
-    cc = GroqContextCiter(
-        groq_model='llama3-70b-8192',
-        context=context,
-        query=prompt,
-        groq_client=groq_client,
-        openai_client=openai_client,
-        cohere_client=cohere_client,
-        num_ablations=8
-    )
+    cc = run_rag(prompt)
     st.session_state.cc = cc
     response = cc.response
     
@@ -140,15 +146,6 @@ if st.session_state.response_links:
     if clicked != "":
         # st.session_state.messages[-1]["content"] += f"\n\nCiting {clicked}"
         cc = st.session_state.cc
-
-        # st.write(f"Closest sentence: {closest_sentence}")
-        # attr_df = cc.get_attributions(closest_sentence, as_dataframe=True, top_k=5).data
-
-        # start_idx = cc.response.find(clicked_sentence)
-        # if start_idx != -1:
-        #     end_idx = start_idx + len(clicked_sentence)
-        # else:
-        #     raise ValueError("Clicked sentence not found in response")
         clicked_sentence = clicked #.split(": ", 1)[1]
         attr_df = cc.get_rerank_df(clicked_sentence, top_k=5) #TODO: Use start & end idx in context_cite
         attr_df = attr_df[attr_df['Score'] != 0]
@@ -156,7 +153,7 @@ if st.session_state.response_links:
             ranked_list_message = 'Here is a ranked list of relevant sentences with citations.'
             st.markdown(ranked_list_message)
             st.write(attr_df)
-
+    else:
         last_message = f"**Cited** *{clicked_sentence}*"
         if "last_message" not in st.session_state:
             st.session_state["last_message"] = last_message

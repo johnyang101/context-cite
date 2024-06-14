@@ -12,6 +12,7 @@ import torch as ch
 from typing import List
 from difflib import get_close_matches
 from nltk.tokenize import sent_tokenize
+from st_click_detector import click_detector
 
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
@@ -32,7 +33,7 @@ if "messages" not in st.session_state:
 st.title("Hypophosphatasia Q&A with Citations")
 
 # Set the subtitle of the Streamlit app
-st.subheader("To know which context sentences contributed to a given answer, use \\cite `your_sentence_here`.")
+st.subheader("To cite AI-generated sentences, just click!")
 
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
@@ -75,7 +76,6 @@ def get_context(query) -> str:
     combined_context += "Hypophosphatasia is a rare, inherited metabolic disorder that affects the development of bones and teeth. It is caused by mutations in the ALPL gene, which encodes an enzyme called alkaline phosphatase. People with hypophosphatasia have low levels of alkaline phosphatase, which leads to abnormal mineralization of bones and teeth. The severity of the condition can vary widely, from mild forms that only affect the teeth to severe forms that can be life-threatening. Treatment for hypophosphatasia is focused on managing symptoms and preventing complications. This may include medications to increase alkaline phosphatase levels, physical therapy, and surgery to correct bone deformities."
     return combined_context
 
-
 def run_rag(query: str) -> GroqContextCiter:
     # Define the context
     context = get_context(query)
@@ -92,8 +92,20 @@ def run_rag(query: str) -> GroqContextCiter:
     )
 
 
+if "response_links" not in st.session_state:
+    st.session_state.response_links = False
+
+if "last_message" not in st.session_state:
+    st.session_state.last_message = None
+
 # Accept user input
 if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
+
+    if st.session_state.last_message:
+        with st.chat_message("assistant"):
+            st.markdown(st.session_state.last_message)
+        st.session_state.messages.append({"role": "assistant", "content": st.session_state.last_message})
+
     # Add user message to chat history
     user_query_message = {"role": "user", "content": prompt}
     st.session_state.messages.append(user_query_message)
@@ -101,37 +113,54 @@ if prompt := st.chat_input("Ask a question about hypophosphatasia:"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if prompt.startswith("\\cite") and st.session_state.cc is not None:
-        # Assuming 'results' is already defined as per the instructions
-        cc = st.session_state.cc
-        sentence = prompt.split("\\cite")[1].strip()
-        answer_sentences = sent_tokenize(cc.response)
-        # Fuzzily find the closest sentence in answer_sentences
-        closest_sentence = get_close_matches(sentence, answer_sentences, n=1, cutoff=0.0)
-        if closest_sentence:
-            closest_sentence = closest_sentence[0]
-        else:
-            closest_sentence = "No close match found."
+    cc = run_rag(prompt)
+    st.session_state.cc = cc
+    response = cc.response
+    
+    def _html(response):
+        sentences = sent_tokenize(response)
+        content = ""
+        for i, sentence in enumerate(sentences):
+            content += f"<a href='#' id='{sentence}' style='color: black; text-decoration: none;' onmouseover='this.style.textDecoration=\"underline\"' onmouseout='this.style.textDecoration=\"none\"'>{sentence} </a>" #NOTE: the space at the end is intentional 
+        return content
 
-        st.write(f"Closest sentence: {closest_sentence}")
-        # attr_df = cc.get_attributions(closest_sentence, as_dataframe=True, top_k=5).data
-        attr_df = cc.get_rerank_df(closest_sentence, top_k=5)
+    response_links = _html(response)
+
+    st.session_state.response_links = response_links
+    #TODO: Need good state variable tracking whether it's assistant or not
+    # st.session_state.sentences = sentences
+
+    cc.messages.append(user_query_message)
+    # Add assistant response to chat history
+    assistant_message = {"role": "assistant", "content": response}
+    # st.session_state.messages.append(assistant_message)
+    cc.messages.append(assistant_message)
+
+if st.session_state.response_links:
+    with st.chat_message("assistant"):
+        clicked = click_detector(st.session_state.response_links, key=st.session_state.messages[-1]["content"])
+        mark_citation = f"**Citing** *{clicked}*" if clicked != "" else "**No citation generated**"
+        st.write(mark_citation)
+        last_message = mark_citation
+    
+    if clicked != "":
+        # st.session_state.messages[-1]["content"] += f"\n\nCiting {clicked}"
+        cc = st.session_state.cc
+        clicked_sentence = clicked #.split(": ", 1)[1]
+        attr_df = cc.get_rerank_df(clicked_sentence, top_k=5) #TODO: Use start & end idx in context_cite
         attr_df = attr_df[attr_df['Score'] != 0]
         with st.chat_message("assistant"):
+            ranked_list_message = 'Here is a ranked list of relevant sentences with citations.'
+            st.markdown(ranked_list_message)
             st.write(attr_df)
     else:
-        cc = run_rag(prompt)
-        st.session_state.cc = cc
-        response = cc.response
-        # Display assistant response in chat message container
-        with st.chat_message("assistant"):
-            st.markdown(response)
-        cc.messages.append(user_query_message)
-        # Add assistant response to chat history
-        assistant_message = {"role": "assistant", "content": response}
-        st.session_state.messages.append(assistant_message)
-        cc.messages.append(assistant_message)
-
+        last_message = f"**Cited** *{clicked_sentence}*"
+        if "last_message" not in st.session_state:
+            st.session_state["last_message"] = last_message
+        else:
+            if clicked != st.session_state["last_message"]:
+                st.session_state["last_message"] = last_message
+    
 # Add this at the end of your file
 st.markdown("""
 **Disclaimer:** The information provided by this application is generated by AI and may not always be accurate. The citations provided are not necessarily verified, and we assume no liability for any incorrect or misleading information.

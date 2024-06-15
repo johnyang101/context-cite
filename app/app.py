@@ -153,7 +153,7 @@ if st.session_state.response_links:
             ranked_list_message = 'Here is a ranked list of relevant sentences with citations.'
             st.markdown(ranked_list_message)
             st.write(attr_df)
-    else:
+            
         last_message = f"**Cited** *{clicked_sentence}*"
         if "last_message" not in st.session_state:
             st.session_state["last_message"] = last_message
